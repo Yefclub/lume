@@ -1,16 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import {
-  Brain,
-  ChevronDown,
-  Download,
-  Loader2,
-  PanelRightClose,
-  Send,
-  Trash2,
-} from "lucide-react";
+import { Brain, ChevronDown, Download, Loader2, PanelRightClose, Send, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Message, MessageAvatar, MessageContent } from "@/components/ui/message";
+import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import logo from "@/assets/lume.png";
 import {
   chat,
@@ -35,7 +29,7 @@ function Reasoning({ text, thinking }: { text: string; thinking: boolean }) {
   }, [thinking]);
   if (!text) return null;
   return (
-    <div className="mb-1.5 overflow-hidden rounded-xl border border-border bg-muted/40 text-xs">
+    <div className="overflow-hidden rounded-xl border border-border bg-muted/40 text-xs">
       <button
         onClick={() => setOpen(!open)}
         className="flex w-full items-center gap-1.5 px-2.5 py-1.5 font-medium text-muted-foreground"
@@ -50,6 +44,16 @@ function Reasoning({ text, thinking }: { text: string; thinking: boolean }) {
         </div>
       )}
     </div>
+  );
+}
+
+function TypingDots() {
+  return (
+    <span className="flex gap-1 py-1">
+      <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/60 [animation-delay:-0.2s]" />
+      <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/60 [animation-delay:-0.1s]" />
+      <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/60" />
+    </span>
   );
 }
 
@@ -206,7 +210,7 @@ export function Chat({ onClose }: { onClose: () => void }) {
         </div>
       ) : (
         <>
-          <div ref={scrollRef} className="flex-1 space-y-4 overflow-auto p-3">
+          <div ref={scrollRef} className="flex-1 space-y-5 overflow-auto p-3.5">
             {messages.length === 0 && (
               <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-xs text-muted-foreground">
                 <img src={logo} alt="" className="size-12 opacity-80" />
@@ -217,37 +221,39 @@ export function Chat({ onClose }: { onClose: () => void }) {
             {messages.map((m, i) => {
               if (m.role === "user") {
                 return (
-                  <div key={i} className="flex justify-end">
-                    <div className="max-w-[88%] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-primary px-3.5 py-2 text-sm text-primary-foreground">
-                      {m.content}
-                    </div>
-                  </div>
+                  <Message key={i} align="end">
+                    <MessageContent>
+                      <Bubble variant="default" align="end">
+                        <BubbleContent className="whitespace-pre-wrap">{m.content}</BubbleContent>
+                      </Bubble>
+                    </MessageContent>
+                  </Message>
                 );
               }
               const { reasoning: think, answer, thinking } = splitReasoning(m.content);
-              const empty = !think && !answer;
+              const showBubble = answer || !think;
               return (
-                <div key={i} className="flex items-start gap-2">
-                  <img src={logo} alt="" className="mt-0.5 size-6 shrink-0" />
-                  <div className="min-w-0 flex-1">
+                <Message key={i} align="start">
+                  <MessageAvatar>
+                    <img src={logo} alt="" className="size-7" />
+                  </MessageAvatar>
+                  <MessageContent>
                     <Reasoning text={think} thinking={thinking} />
-                    {(answer || empty) && (
-                      <div className="rounded-2xl rounded-tl-sm border border-border bg-card px-3.5 py-2 text-sm">
-                        {answer ? (
-                          <div className="prose prose-sm max-w-none dark:prose-invert prose-p:my-1.5 prose-pre:my-2">
-                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{answer}</ReactMarkdown>
-                          </div>
-                        ) : (
-                          <span className="flex gap-1">
-                            <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/60 [animation-delay:-0.2s]" />
-                            <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/60 [animation-delay:-0.1s]" />
-                            <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/60" />
-                          </span>
-                        )}
-                      </div>
+                    {showBubble && (
+                      <Bubble variant="outline" align="start">
+                        <BubbleContent>
+                          {answer ? (
+                            <div className="prose prose-sm max-w-none dark:prose-invert prose-p:my-1.5 prose-pre:my-2">
+                              <ReactMarkdown remarkPlugins={[remarkGfm]}>{answer}</ReactMarkdown>
+                            </div>
+                          ) : (
+                            <TypingDots />
+                          )}
+                        </BubbleContent>
+                      </Bubble>
                     )}
-                  </div>
-                </div>
+                  </MessageContent>
+                </Message>
               );
             })}
           </div>
