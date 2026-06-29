@@ -14,6 +14,7 @@ import { UpdateBanner } from "@/components/UpdateBanner";
 import { Novidades } from "@/components/Novidades";
 import { Chat } from "@/components/Chat";
 import { NoteEditor } from "@/components/NoteEditor";
+import logo from "@/assets/lume.png";
 import { createNote, listNotes } from "@/lib/api";
 import { type OkfNote, TYPE_LABEL, TYPES } from "@/lib/types";
 
@@ -82,9 +83,7 @@ function App() {
     <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
       {/* Top bar */}
       <header className="flex items-center gap-3 border-b border-border px-5 py-2.5">
-        <span className="flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-primary/25 to-amber-500/10 text-primary">
-          <BrainCircuit className="size-5" />
-        </span>
+        <img src={logo} alt="Lume" className="size-9 shrink-0" />
         <div className="leading-none">
           <span className="bg-gradient-to-r from-primary to-amber-500 bg-clip-text text-lg font-bold text-transparent">
             Lume
@@ -233,10 +232,10 @@ function App() {
             </div>
           )}
         </main>
+        {showChat && <Chat onClose={() => setShowChat(false)} />}
       </div>
 
       <AnimatePresence>
-        {showChat && <Chat key="chat" onClose={() => setShowChat(false)} />}
         {showNovidades && <Novidades key="novidades" onClose={() => setShowNovidades(false)} />}
       </AnimatePresence>
     </div>
