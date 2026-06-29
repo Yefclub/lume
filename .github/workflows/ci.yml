@@ -45,12 +45,23 @@ jobs:
             cmake \
             clang \
             libclang-dev
+      - name: Vulkan SDK
+        uses: jakoch/install-vulkan-sdk-action@v1
+        with:
+          install_runtime: false
+          cache: true
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: "src-tauri -> target"
+      - name: Pré-compilar llama.cpp (retry shaders Vulkan)
+        run: |
+          for i in 1 2 3 4 5; do
+            cargo build --manifest-path src-tauri/Cargo.toml -p llama-cpp-sys-2 && break
+            echo "::warning::retry llama-cpp-sys $i"; sleep 5
+          done
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
       - run: cargo test --manifest-path src-tauri/Cargo.toml

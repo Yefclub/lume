@@ -384,8 +384,14 @@ pub async fn chat(
         let needs = guard.as_ref().map(|(id, _)| id != def.id).unwrap_or(true);
         if needs {
             log::info!("carregando modelo {}", def.id);
-            let m = LlamaModel::load_from_file(&backend, &path, &LlamaModelParams::default())
-                .map_err(|e| format!("falha ao carregar o modelo: {e}"))?;
+            // Offload total para a GPU (Vulkan/Metal/CUDA quando compilado);
+            // build CPU ignora. n_gpu_layers alto = todas as camadas na GPU.
+            let m = LlamaModel::load_from_file(
+                &backend,
+                &path,
+                &LlamaModelParams::default().with_n_gpu_layers(999),
+            )
+            .map_err(|e| format!("falha ao carregar o modelo: {e}"))?;
             *guard = Some((def.id.to_string(), Arc::new(m)));
         }
         guard.as_ref().unwrap().1.clone()

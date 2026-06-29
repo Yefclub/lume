@@ -67,6 +67,14 @@ jobs:
         shell: bash
         run: echo "LIBCLANG_PATH=C:\\Program Files\\LLVM\\bin" >> "$GITHUB_ENV"
 
+      # GPU: Vulkan no Windows/Linux (macOS usa Metal, nativo — não precisa).
+      - name: Vulkan SDK
+        if: matrix.platform != 'macos-latest'
+        uses: jakoch/install-vulkan-sdk-action@v1
+        with:
+          install_runtime: false
+          cache: true
+
       - uses: pnpm/action-setup@v4
         with:
           version: 10
@@ -82,6 +90,16 @@ jobs:
           workspaces: "src-tauri -> target"
 
       - run: pnpm install --frozen-lockfile
+
+      # O build dos shaders Vulkan é flaky em paralelo — pré-compila com retry
+      # para o tauri-action reaproveitar o llama-cpp-sys já compilado.
+      - name: Pré-compilar llama.cpp (retry shaders)
+        shell: bash
+        run: |
+          for i in 1 2 3 4 5; do
+            cargo build --release --manifest-path src-tauri/Cargo.toml ${{ matrix.args }} -p llama-cpp-sys-2 && break
+            echo "::warning::retry llama-cpp-sys $i"; sleep 5
+          done
 
       - name: Nota de release (Novidades)
         id: notes
