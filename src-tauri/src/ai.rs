@@ -83,7 +83,10 @@ pub enum DlEvent {
     Error { message: String },
 }
 
-/// Baixa o modelo GGUF com progresso (download em arquivo .part + rename atômico).
+const MAX_RETRIES: u32 = 6;
+
+/// Baixa o modelo GGUF com progresso, **resumível** (HTTP Range) e com retry.
+/// Em falha de rede mantém o `.part` para retomar de onde parou.
 #[tauri::command]
 pub fn download_model(app: AppHandle, on_event: Channel<DlEvent>) -> Result<(), String> {
     let path = model_path(&app)?;
@@ -92,46 +95,95 @@ pub fn download_model(app: AppHandle, on_event: Channel<DlEvent>) -> Result<(), 
         return Ok(());
     }
     let tmp = path.with_extension("part");
+    log::info!("iniciando download do modelo: {MODEL_URL}");
 
-    let result = (|| -> Result<(), String> {
-        use std::io::{Read, Write};
-        let client = reqwest::blocking::Client::builder()
-            .timeout(None)
-            .build()
-            .map_err(|e| e.to_string())?;
-        let mut resp = client.get(MODEL_URL).send().map_err(|e| e.to_string())?;
-        if !resp.status().is_success() {
-            return Err(format!("HTTP {}", resp.status()));
-        }
-        let total = resp.content_length().unwrap_or(0);
-        let mut file = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
-        let mut downloaded: u64 = 0;
-        let mut buf = vec![0u8; 1 << 20];
-        loop {
-            let n = resp.read(&mut buf).map_err(|e| e.to_string())?;
-            if n == 0 {
-                break;
-            }
-            file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
-            downloaded += n as u64;
-            let _ = on_event.send(DlEvent::Progress { downloaded, total });
-        }
-        file.flush().ok();
-        std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
-        Ok(())
-    })();
-
-    match result {
+    match download_with_resume(&tmp, &on_event) {
         Ok(()) => {
+            std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+            log::info!("modelo baixado com sucesso: {}", path.display());
             let _ = on_event.send(DlEvent::Done);
             Ok(())
         }
         Err(e) => {
-            let _ = std::fs::remove_file(&tmp);
+            log::error!("download do modelo falhou: {e}");
             let _ = on_event.send(DlEvent::Error { message: e.clone() });
             Err(e)
         }
     }
+}
+
+fn download_with_resume(tmp: &std::path::Path, on_event: &Channel<DlEvent>) -> Result<(), String> {
+    use std::io::{Read, Write};
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("Lume/1.0 (+https://github.com/Yefclub/lume)")
+        .timeout(None)
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let mut last_err = String::new();
+    for attempt in 1..=MAX_RETRIES {
+        let mut existing = tmp.metadata().map(|m| m.len()).unwrap_or(0);
+        let mut req = client.get(MODEL_URL);
+        if existing > 0 {
+            req = req.header(reqwest::header::RANGE, format!("bytes={existing}-"));
+        }
+        let mut resp = match req.send() {
+            Ok(r) => r,
+            Err(e) => {
+                last_err = e.to_string();
+                log::warn!("tentativa {attempt}/{MAX_RETRIES} sem conectar: {last_err}");
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                continue;
+            }
+        };
+        let status = resp.status();
+        let append = existing > 0 && status == reqwest::StatusCode::PARTIAL_CONTENT;
+        if existing > 0 && !append {
+            existing = 0; // servidor ignorou o Range: recomeça
+        }
+        if !status.is_success() {
+            return Err(format!("HTTP {status}"));
+        }
+
+        let total = existing + resp.content_length().unwrap_or(0);
+        let mut oo = std::fs::OpenOptions::new();
+        oo.create(true).write(true);
+        if append {
+            oo.append(true);
+        } else {
+            oo.truncate(true);
+        }
+        let mut file = oo.open(tmp).map_err(|e| e.to_string())?;
+
+        let mut downloaded = existing;
+        let mut buf = vec![0u8; 1 << 20];
+        let stream = (|| -> Result<(), String> {
+            loop {
+                let n = resp.read(&mut buf).map_err(|e| e.to_string())?;
+                if n == 0 {
+                    break;
+                }
+                file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+                downloaded += n as u64;
+                let _ = on_event.send(DlEvent::Progress { downloaded, total });
+            }
+            Ok(())
+        })();
+        file.flush().ok();
+
+        match stream {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                last_err = e;
+                log::warn!(
+                    "tentativa {attempt}/{MAX_RETRIES} caiu em {downloaded}/{total}: {last_err}"
+                );
+                std::thread::sleep(std::time::Duration::from_secs(3));
+            }
+        }
+    }
+    Err(format!("falhou após {MAX_RETRIES} tentativas: {last_err}"))
 }
 
 #[derive(Deserialize)]

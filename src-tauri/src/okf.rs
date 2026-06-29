@@ -75,57 +75,17 @@ pub fn parse_okf(raw: &str, path: &str) -> Result<OkfNote, String> {
     })
 }
 
-// ----- Armazenamento (app data dir + seed) -------------------------------
+// ----- Armazenamento (app data dir) --------------------------------------
 
-/// Notas-semente embutidas no binário (copiadas de `brain.example/`).
-const SEEDS: &[(&str, &str)] = &[
-    (
-        "goals/aprender-rust.md",
-        include_str!("../../brain.example/goals/aprender-rust.md"),
-    ),
-    (
-        "notes/ownership.md",
-        include_str!("../../brain.example/notes/ownership.md"),
-    ),
-    (
-        "daily/2026-06-28.md",
-        include_str!("../../brain.example/daily/2026-06-28.md"),
-    ),
-    (
-        "people/ana.md",
-        include_str!("../../brain.example/people/ana.md"),
-    ),
-    (
-        "preferences/cafe.md",
-        include_str!("../../brain.example/preferences/cafe.md"),
-    ),
-    (
-        "facts/fuso.md",
-        include_str!("../../brain.example/facts/fuso.md"),
-    ),
-    (
-        "projects/lume.md",
-        include_str!("../../brain.example/projects/lume.md"),
-    ),
-];
-
-/// Diretório do cérebro (`<app_data_dir>/brain`). Cria e semeia se for novo.
+/// Diretório do cérebro (`<app_data_dir>/brain`). Começa VAZIO — o app vem
+/// com dados limpos (sem notas de exemplo pré-cadastradas).
 fn brain_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let base = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("não foi possível resolver o diretório de dados: {e}"))?
         .join("brain");
-    if !base.exists() {
-        std::fs::create_dir_all(&base).map_err(|e| e.to_string())?;
-        for (rel, content) in SEEDS {
-            let p = base.join(rel);
-            if let Some(parent) = p.parent() {
-                std::fs::create_dir_all(parent).ok();
-            }
-            std::fs::write(&p, content).map_err(|e| e.to_string())?;
-        }
-    }
+    std::fs::create_dir_all(&base).map_err(|e| e.to_string())?;
     Ok(base)
 }
 

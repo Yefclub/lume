@@ -1,22 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { AnimatePresence, motion } from "motion/react";
 import {
   AlertTriangle,
   Bot,
   BrainCircuit,
-  FileText,
   Plus,
   RefreshCw,
-  Save,
   Search,
   Sparkles,
-  Tag,
-  Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { Novidades } from "@/components/Novidades";
 import { Chat } from "@/components/Chat";
-import { createNote, deleteNote, listNotes, readNote, saveNote } from "@/lib/api";
+import { NoteEditor } from "@/components/NoteEditor";
+import { createNote, listNotes } from "@/lib/api";
 import { type OkfNote, TYPE_LABEL, TYPES } from "@/lib/types";
 
 function App() {
@@ -25,13 +23,9 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [activeTag, setActiveTag] = useState<string | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
-  const [draft, setDraft] = useState("");
-  const [dirty, setDirty] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [editorError, setEditorError] = useState<string | null>(null);
-  const [showNovidades, setShowNovidades] = useState(false);
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [showChat, setShowChat] = useState(false);
+  const [showNovidades, setShowNovidades] = useState(false);
   const [newType, setNewType] = useState<string>("note");
   const [newTitle, setNewTitle] = useState("");
 
@@ -71,154 +65,116 @@ function App() {
     });
   }, [notes, search, activeTag]);
 
-  const openNote = useCallback(async (path: string) => {
-    setSelected(path);
-    setEditorError(null);
-    try {
-      setDraft(await readNote(path));
-      setDirty(false);
-    } catch (e) {
-      setEditorError(String(e));
-    }
-  }, []);
-
-  const onSave = async () => {
-    if (!selected) return;
-    setSaving(true);
-    setEditorError(null);
-    try {
-      await saveNote(selected, draft);
-      setDirty(false);
-      await load();
-    } catch (e) {
-      setEditorError(String(e));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const onDelete = async () => {
-    if (!selected || !window.confirm("Apagar esta nota? Não dá pra desfazer.")) return;
-    try {
-      await deleteNote(selected);
-      setSelected(null);
-      setDraft("");
-      await load();
-    } catch (e) {
-      setEditorError(String(e));
-    }
-  };
+  const selectedNote = notes.find((n) => n.path === selectedPath) ?? null;
 
   const onCreate = async () => {
     try {
       const note = await createNote(newType, newTitle.trim() || "Sem título");
       setNewTitle("");
       await load();
-      await openNote(note.path);
+      setSelectedPath(note.path);
     } catch (e) {
       setError(String(e));
     }
   };
 
   return (
-    <div className="flex h-screen flex-col bg-background text-foreground">
-      <header className="border-b border-border">
-        <div className="mx-auto flex max-w-5xl items-center gap-3 px-6 py-3">
-          <span className="flex size-9 items-center justify-center rounded-xl bg-primary/15 text-primary">
-            <BrainCircuit className="size-5" />
-          </span>
-          <span className="bg-gradient-to-r from-primary to-amber-500 bg-clip-text text-xl font-bold text-transparent">
+    <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
+      {/* Top bar */}
+      <header className="flex items-center gap-3 border-b border-border px-5 py-2.5">
+        <span className="flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-primary/25 to-amber-500/10 text-primary">
+          <BrainCircuit className="size-5" />
+        </span>
+        <div className="leading-none">
+          <span className="bg-gradient-to-r from-primary to-amber-500 bg-clip-text text-lg font-bold text-transparent">
             Lume
           </span>
-          <div className="relative ml-3 max-w-xs flex-1">
-            <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Buscar no cérebro…"
-              className="h-9 w-full rounded-md border border-input bg-background pl-8 pr-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
-          </div>
+        </div>
+        <div className="ml-auto flex items-center gap-1.5">
           <Button variant="ghost" size="sm" onClick={() => setShowChat(true)}>
             <Bot /> IA
           </Button>
           <Button variant="ghost" size="sm" onClick={() => setShowNovidades(true)}>
             <Sparkles /> Novidades
           </Button>
-          <Button variant="outline" size="icon" onClick={() => void load()} disabled={loading} aria-label="Recarregar">
-            <RefreshCw className={loading ? "animate-spin" : ""} />
-          </Button>
         </div>
       </header>
 
       <UpdateBanner />
 
-      {error && (
-        <div className="mx-auto mt-4 flex w-full max-w-5xl items-start gap-3 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm">
-          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
-          <span className="text-muted-foreground">{error}</span>
-        </div>
-      )}
-
-      <main className="mx-auto grid w-full max-w-5xl flex-1 grid-cols-1 gap-4 overflow-hidden px-6 py-4 md:grid-cols-[320px_1fr]">
-        {/* Coluna lista */}
-        <aside className="flex min-h-0 flex-col gap-3">
-          <div className="flex gap-2">
-            <select
-              value={newType}
-              onChange={(e) => setNewType(e.target.value)}
-              className="h-9 rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              {TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {TYPE_LABEL[t]}
-                </option>
-              ))}
-            </select>
-            <input
-              value={newTitle}
-              onChange={(e) => setNewTitle(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && void onCreate()}
-              placeholder="Nova nota…"
-              className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
-            <Button size="icon" onClick={() => void onCreate()} aria-label="Criar nota">
-              <Plus />
-            </Button>
+      <div className="flex min-h-0 flex-1">
+        {/* Sidebar */}
+        <aside className="flex w-80 shrink-0 flex-col border-r border-border bg-card/30">
+          <div className="space-y-3 border-b border-border p-3">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Buscar no cérebro…"
+                className="h-9 w-full rounded-lg border border-input bg-background pl-8 pr-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            </div>
+            <div className="flex gap-1.5">
+              <select
+                value={newType}
+                onChange={(e) => setNewType(e.target.value)}
+                className="h-9 rounded-lg border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                {TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {TYPE_LABEL[t]}
+                  </option>
+                ))}
+              </select>
+              <input
+                value={newTitle}
+                onChange={(e) => setNewTitle(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && void onCreate()}
+                placeholder="Nova nota…"
+                className="h-9 min-w-0 flex-1 rounded-lg border border-input bg-background px-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+              <Button size="icon" onClick={() => void onCreate()} aria-label="Criar nota">
+                <Plus />
+              </Button>
+            </div>
+            {allTags.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {allTags.map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setActiveTag(activeTag === t ? null : t)}
+                    className={
+                      "rounded-full border px-2 py-0.5 text-xs transition-colors " +
+                      (activeTag === t
+                        ? "border-primary bg-primary/15 text-primary"
+                        : "border-border text-muted-foreground hover:border-primary/40")
+                    }
+                  >
+                    #{t}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
-          {allTags.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
-              {allTags.map((t) => (
-                <button
-                  key={t}
-                  onClick={() => setActiveTag(activeTag === t ? null : t)}
-                  className={
-                    "rounded-full border px-2 py-0.5 text-xs transition-colors " +
-                    (activeTag === t
-                      ? "border-primary bg-primary/15 text-primary"
-                      : "border-border text-muted-foreground hover:border-primary/40")
-                  }
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
-          )}
-
-          <div className="min-h-0 flex-1 space-y-1.5 overflow-auto pr-1">
-            {filtered.length === 0 && (
-              <p className="px-1 pt-2 text-sm text-muted-foreground">Nenhuma nota.</p>
+          <div className="min-h-0 flex-1 space-y-1 overflow-auto p-2">
+            {filtered.length === 0 && !loading && (
+              <p className="px-2 pt-4 text-sm text-muted-foreground">
+                {notes.length === 0 ? "Cérebro vazio. Crie sua primeira nota acima ✨" : "Nada encontrado."}
+              </p>
             )}
             {filtered.map((n) => (
-              <button
+              <motion.button
+                layout
                 key={n.path}
-                onClick={() => void openNote(n.path)}
+                onClick={() => setSelectedPath(n.path)}
+                whileTap={{ scale: 0.98 }}
                 className={
-                  "block w-full rounded-lg border px-3 py-2 text-left transition-all " +
-                  (selected === n.path
+                  "block w-full rounded-xl border px-3 py-2.5 text-left transition-colors " +
+                  (selectedPath === n.path
                     ? "border-primary/50 bg-primary/5"
-                    : "border-border hover:border-primary/30 hover:bg-accent/40")
+                    : "border-transparent hover:border-border hover:bg-accent/40")
                 }
               >
                 <div className="flex items-center gap-2">
@@ -227,63 +183,62 @@ function App() {
                   </span>
                   <span className="truncate text-sm font-medium">{n.title ?? n.path}</span>
                 </div>
-                {n.tags.length > 0 && (
-                  <div className="mt-1 truncate text-xs text-muted-foreground">#{n.tags.join(" #")}</div>
+                {n.description && (
+                  <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">{n.description}</p>
                 )}
-              </button>
+              </motion.button>
             ))}
+          </div>
+
+          <div className="flex items-center justify-between border-t border-border px-3 py-2 text-xs text-muted-foreground">
+            <span>{notes.length} nota(s)</span>
+            <button onClick={() => void load()} className="flex items-center gap-1 hover:text-foreground">
+              <RefreshCw className={"size-3 " + (loading ? "animate-spin" : "")} /> recarregar
+            </button>
           </div>
         </aside>
 
-        {/* Coluna editor */}
-        <section className="flex min-h-0 flex-col rounded-xl border border-border bg-card">
-          {!selected ? (
-            <div className="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center text-muted-foreground">
-              <FileText className="size-8 opacity-40" />
-              <p className="text-sm">Selecione uma nota à esquerda ou crie uma nova.</p>
-              <p className="text-xs">
-                {notes.length} nota(s) no cérebro · edição em markdown (OKF)
-              </p>
+        {/* Main */}
+        <main className="min-w-0 flex-1">
+          {error && (
+            <div className="m-4 flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
+              <span className="text-muted-foreground">{error}</span>
             </div>
-          ) : (
-            <>
-              <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2.5">
-                <span className="truncate text-sm text-muted-foreground">{selected}</span>
-                <div className="flex items-center gap-2">
-                  <Button size="sm" onClick={() => void onSave()} disabled={saving || !dirty}>
-                    {saving ? <RefreshCw className="animate-spin" /> : <Save />}
-                    Salvar
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => void onDelete()} aria-label="Excluir">
-                    <Trash2 />
-                  </Button>
-                </div>
-              </div>
-              {editorError && (
-                <div className="border-b border-destructive/40 bg-destructive/10 px-4 py-2 text-xs text-destructive">
-                  {editorError}
-                </div>
-              )}
-              <textarea
-                value={draft}
-                onChange={(e) => {
-                  setDraft(e.target.value);
-                  setDirty(true);
-                }}
-                spellCheck={false}
-                className="min-h-0 flex-1 resize-none bg-transparent p-4 font-mono text-sm leading-relaxed outline-none"
-              />
-              <div className="flex items-center gap-1.5 border-t border-border px-4 py-2 text-xs text-muted-foreground">
-                <Tag className="size-3" />
-                edite o frontmatter YAML + o corpo · <code>type</code> é obrigatório
-              </div>
-            </>
           )}
-        </section>
-      </main>
+          {selectedNote ? (
+            <NoteEditor
+              key={selectedNote.path}
+              note={selectedNote}
+              onSaved={() => void load()}
+              onDeleted={() => {
+                setSelectedPath(null);
+                void load();
+              }}
+            />
+          ) : (
+            <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center text-muted-foreground">
+              <span className="flex size-16 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                <BrainCircuit className="size-8" />
+              </span>
+              <div>
+                <p className="font-medium text-foreground">Seu segundo cérebro</p>
+                <p className="mt-1 text-sm">
+                  Selecione uma nota, crie uma nova, ou converse com a IA sobre o que você anotou.
+                </p>
+              </div>
+              <Button variant="outline" size="sm" onClick={() => setShowChat(true)}>
+                <Bot /> Abrir a IA
+              </Button>
+            </div>
+          )}
+        </main>
+      </div>
 
-      {showChat && <Chat onClose={() => setShowChat(false)} />}
-      {showNovidades && <Novidades onClose={() => setShowNovidades(false)} />}
+      <AnimatePresence>
+        {showChat && <Chat key="chat" onClose={() => setShowChat(false)} />}
+        {showNovidades && <Novidades key="novidades" onClose={() => setShowNovidades(false)} />}
+      </AnimatePresence>
     </div>
   );
 }
