@@ -1,0 +1,14 @@
+# Configuração do gitleaks para o LUME.
+# Herda todas as regras padrão do gitleaks como base.
+[extend]
+useDefault = true
+
+# Allowlist: caminhos que contêm conteúdo fictício de exemplo, não segredos
+# reais. O diretório brain.example/ e os arquivos .md de exemplo existem apenas
+# para demonstração e testes, portanto não devem disparar alertas de segredo.
+[allowlist]
+description = "Conteúdo fictício de exemplo (não são segredos reais)"
+paths = [
+  '''brain\.example/''',
+  '''.*\.example\.md$''',
+]

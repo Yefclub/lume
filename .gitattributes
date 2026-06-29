@@ -1,0 +1,15 @@
+# Normaliza fins de linha para LF em todo o repositório (CI roda em Linux).
+* text=auto eol=lf
+
+# Scripts de shell PRECISAM ser LF (ex.: hooks rodados via bash).
+*.sh text eol=lf
+
+# Binários — nunca normalizar.
+*.png binary
+*.ico binary
+*.icns binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.woff binary
+*.woff2 binary
