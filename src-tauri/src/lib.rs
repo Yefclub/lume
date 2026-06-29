@@ -21,6 +21,7 @@ pub fn run() {
             // Após atualizar, o app pode abrir minimizado — força mostrar e focar.
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.unminimize();
+                let _ = w.maximize();
                 let _ = w.show();
                 let _ = w.set_focus();
             }

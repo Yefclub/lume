@@ -433,6 +433,8 @@ pub fn chat(
     let mut sampler = LlamaSampler::greedy();
     let base = tokens.len() as i32;
     let mut decoder = encoding_rs::UTF_8.new_decoder();
+    let t0 = std::time::Instant::now();
+    let mut n_gen = 0i32;
 
     for i in 0..1024i32 {
         let tok = sampler.sample(&ctx, batch.n_tokens() - 1);
@@ -447,6 +449,7 @@ pub fn chat(
             break;
         }
         let _ = on_token.send(piece);
+        n_gen += 1;
 
         batch.clear();
         batch
@@ -454,5 +457,13 @@ pub fn chat(
             .map_err(|e| e.to_string())?;
         ctx.decode(&mut batch).map_err(|e| e.to_string())?;
     }
+    let secs = t0.elapsed().as_secs_f64().max(0.001);
+    log::info!(
+        "geração: {n_gen} tokens em {:.1}s ({:.1} tok/s) · {} · prompt {} tokens",
+        secs,
+        n_gen as f64 / secs,
+        def.id,
+        tokens.len()
+    );
     Ok(())
 }

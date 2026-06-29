@@ -1,8 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Bot, Brain, ChevronDown, Download, Loader2, PanelRightClose, Send } from "lucide-react";
+import {
+  Brain,
+  ChevronDown,
+  Download,
+  Loader2,
+  PanelRightClose,
+  Send,
+  Trash2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import logo from "@/assets/lume.png";
 import {
   chat,
   downloadModel,
@@ -16,6 +25,7 @@ import {
 
 const LS_MODEL = "lume.model";
 const LS_REASON = "lume.reasoning";
+const LS_CHAT = "lume.chat";
 const fmtGB = (g: number) => `${g.toFixed(1)} GB`;
 
 function Reasoning({ text, thinking }: { text: string; thinking: boolean }) {
@@ -25,17 +35,17 @@ function Reasoning({ text, thinking }: { text: string; thinking: boolean }) {
   }, [thinking]);
   if (!text) return null;
   return (
-    <div className="mb-2 rounded-lg border border-border bg-muted/40 text-xs">
+    <div className="mb-1.5 overflow-hidden rounded-xl border border-border bg-muted/40 text-xs">
       <button
         onClick={() => setOpen(!open)}
-        className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-muted-foreground"
+        className="flex w-full items-center gap-1.5 px-2.5 py-1.5 font-medium text-muted-foreground"
       >
-        <Brain className="size-3.5" />
+        <Brain className={"size-3.5 " + (thinking ? "animate-pulse text-primary" : "")} />
         {thinking ? "Pensando…" : "Raciocínio"}
         <ChevronDown className={"ml-auto size-3.5 transition-transform " + (open ? "" : "-rotate-90")} />
       </button>
       {open && (
-        <div className="max-h-48 overflow-auto whitespace-pre-wrap px-2.5 pb-2 text-muted-foreground/80">
+        <div className="max-h-40 overflow-auto whitespace-pre-wrap border-t border-border/60 px-2.5 py-1.5 text-muted-foreground/80">
           {text}
         </div>
       )}
@@ -47,13 +57,17 @@ export function Chat({ onClose }: { onClose: () => void }) {
   const [models, setModels] = useState<ModelDef[]>([]);
   const [modelId, setModelId] = useState<string>(() => localStorage.getItem(LS_MODEL) || "");
   const [status, setStatus] = useState<ModelStatus | null>(null);
-  const [reasoning, setReasoning] = useState<boolean>(() => localStorage.getItem(LS_REASON) !== "0");
+  const [reasoning, setReasoning] = useState<boolean>(() => localStorage.getItem(LS_REASON) === "1");
   const [downloading, setDownloading] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [got, setGot] = useState(0);
-  const [total, setTotal] = useState(0);
   const [dlError, setDlError] = useState<string | null>(null);
-  const [messages, setMessages] = useState<ChatMsg[]>([]);
+  const [messages, setMessages] = useState<ChatMsg[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem(LS_CHAT) || "[]");
+    } catch {
+      return [];
+    }
+  });
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -66,21 +80,15 @@ export function Chat({ onClose }: { onClose: () => void }) {
       })
       .catch((e) => setDlError(String(e)));
   }, []);
-
   useEffect(() => {
     if (!modelId) return;
     localStorage.setItem(LS_MODEL, modelId);
     setStatus(null);
     modelStatus(modelId).then(setStatus).catch((e) => setDlError(String(e)));
   }, [modelId]);
-
-  useEffect(() => {
-    localStorage.setItem(LS_REASON, reasoning ? "1" : "0");
-  }, [reasoning]);
-
-  useEffect(() => {
-    scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight);
-  }, [messages]);
+  useEffect(() => localStorage.setItem(LS_REASON, reasoning ? "1" : "0"), [reasoning]);
+  useEffect(() => localStorage.setItem(LS_CHAT, JSON.stringify(messages)), [messages]);
+  useEffect(() => scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight), [messages]);
 
   const model = models.find((m) => m.id === modelId);
 
@@ -89,13 +97,8 @@ export function Chat({ onClose }: { onClose: () => void }) {
     setDlError(null);
     try {
       await downloadModel(modelId, (e) => {
-        if (e.event === "Progress") {
-          setGot(e.data.downloaded);
-          setTotal(e.data.total);
-          setProgress(e.data.total ? e.data.downloaded / e.data.total : 0);
-        } else if (e.event === "Error") {
-          setDlError(e.data.message);
-        }
+        if (e.event === "Progress") setProgress(e.data.total ? e.data.downloaded / e.data.total : 0);
+        else if (e.event === "Error") setDlError(e.data.message);
       });
       setStatus(await modelStatus(modelId));
     } catch (e) {
@@ -136,7 +139,7 @@ export function Chat({ onClose }: { onClose: () => void }) {
   return (
     <aside className="flex w-[380px] shrink-0 flex-col border-l border-border bg-card/20">
       <header className="flex items-center gap-2 border-b border-border px-3 py-2">
-        <Bot className="size-4 shrink-0 text-primary" />
+        <img src={logo} alt="" className="size-6 shrink-0" />
         <select
           value={modelId}
           onChange={(e) => setModelId(e.target.value)}
@@ -148,6 +151,11 @@ export function Chat({ onClose }: { onClose: () => void }) {
             </option>
           ))}
         </select>
+        {messages.length > 0 && (
+          <Button variant="ghost" size="icon" onClick={() => setMessages([])} aria-label="Limpar conversa">
+            <Trash2 />
+          </Button>
+        )}
         <Button variant="ghost" size="icon" onClick={onClose} aria-label="Fechar painel">
           <PanelRightClose />
         </Button>
@@ -159,19 +167,9 @@ export function Chat({ onClose }: { onClose: () => void }) {
           className="flex items-center gap-2 border-b border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent/30"
         >
           <Brain className="size-3.5" />
-          Raciocínio
-          <span
-            className={
-              "ml-auto flex h-5 w-9 items-center rounded-full transition-colors " +
-              (reasoning ? "bg-primary" : "bg-muted")
-            }
-          >
-            <span
-              className={
-                "block size-4 rounded-full bg-white transition-transform " +
-                (reasoning ? "translate-x-4" : "translate-x-0.5")
-              }
-            />
+          Raciocínio {reasoning ? "(mais lento)" : ""}
+          <span className={"ml-auto flex h-5 w-9 items-center rounded-full transition-colors " + (reasoning ? "bg-primary" : "bg-muted")}>
+            <span className={"block size-4 rounded-full bg-white shadow transition-transform " + (reasoning ? "translate-x-4" : "translate-x-0.5")} />
           </span>
         </button>
       )}
@@ -182,13 +180,11 @@ export function Chat({ onClose }: { onClose: () => void }) {
         </div>
       ) : !status.exists ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-          <span className="flex size-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-            <Bot className="size-7" />
-          </span>
+          <img src={logo} alt="" className="size-14" />
           <div>
             <p className="text-sm font-medium text-foreground">Baixe o {status.name}</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              {fmtGB(status.size_gb)} · roda 100% local. Retoma sozinho se a conexão cair.
+              {fmtGB(status.size_gb)} · 100% local. Retoma sozinho se cair.
             </p>
           </div>
           {dlError && <p className="text-xs text-destructive">{dlError}</p>}
@@ -200,7 +196,7 @@ export function Chat({ onClose }: { onClose: () => void }) {
             <div className="w-full max-w-[260px]">
               <div className="mb-1 flex justify-between text-xs text-muted-foreground">
                 <span>Baixando…</span>
-                <span>{total ? `${Math.round(progress * 100)}%` : `${(got / 1e9).toFixed(1)} GB`}</span>
+                <span>{Math.round(progress * 100)}%</span>
               </div>
               <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
                 <div className="h-full bg-primary transition-all" style={{ width: `${progress * 100}%` }} />
@@ -210,44 +206,53 @@ export function Chat({ onClose }: { onClose: () => void }) {
         </div>
       ) : (
         <>
-          <div ref={scrollRef} className="flex-1 space-y-3 overflow-auto p-3">
+          <div ref={scrollRef} className="flex-1 space-y-4 overflow-auto p-3">
             {messages.length === 0 && (
-              <div className="pt-10 text-center text-xs text-muted-foreground">
-                <p>Converse sobre o seu cérebro.</p>
-                <p className="mt-1">A IA lê suas notas para responder.</p>
+              <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-xs text-muted-foreground">
+                <img src={logo} alt="" className="size-12 opacity-80" />
+                <p className="font-medium text-foreground">Converse com o seu cérebro</p>
+                <p>A IA lê suas notas para responder.</p>
               </div>
             )}
             {messages.map((m, i) => {
               if (m.role === "user") {
                 return (
                   <div key={i} className="flex justify-end">
-                    <div className="max-w-[90%] whitespace-pre-wrap rounded-2xl bg-primary px-3 py-2 text-sm text-primary-foreground">
+                    <div className="max-w-[88%] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-primary px-3.5 py-2 text-sm text-primary-foreground">
                       {m.content}
                     </div>
                   </div>
                 );
               }
               const { reasoning: think, answer, thinking } = splitReasoning(m.content);
+              const empty = !think && !answer;
               return (
-                <div key={i} className="flex justify-start">
-                  <div className="max-w-[92%]">
+                <div key={i} className="flex items-start gap-2">
+                  <img src={logo} alt="" className="mt-0.5 size-6 shrink-0" />
+                  <div className="min-w-0 flex-1">
                     <Reasoning text={think} thinking={thinking} />
-                    <div className="rounded-2xl border border-border bg-card px-3 py-2 text-sm">
-                      {answer ? (
-                        <div className="prose prose-sm max-w-none dark:prose-invert prose-p:my-1.5">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{answer}</ReactMarkdown>
-                        </div>
-                      ) : !think ? (
-                        <Loader2 className="size-4 animate-spin" />
-                      ) : null}
-                    </div>
+                    {(answer || empty) && (
+                      <div className="rounded-2xl rounded-tl-sm border border-border bg-card px-3.5 py-2 text-sm">
+                        {answer ? (
+                          <div className="prose prose-sm max-w-none dark:prose-invert prose-p:my-1.5 prose-pre:my-2">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{answer}</ReactMarkdown>
+                          </div>
+                        ) : (
+                          <span className="flex gap-1">
+                            <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/60 [animation-delay:-0.2s]" />
+                            <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/60 [animation-delay:-0.1s]" />
+                            <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/60" />
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               );
             })}
           </div>
-          <div className="border-t border-border p-2.5">
-            <div className="flex items-end gap-2 rounded-xl border border-input bg-background p-1.5">
+          <div className="p-2.5">
+            <div className="flex items-end gap-1.5 rounded-2xl border border-input bg-background p-1.5 focus-within:ring-2 focus-within:ring-ring">
               <textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
@@ -260,9 +265,9 @@ export function Chat({ onClose }: { onClose: () => void }) {
                 rows={1}
                 placeholder="Pergunte sobre o seu cérebro…"
                 disabled={busy}
-                className="max-h-32 min-h-[2rem] flex-1 resize-none bg-transparent px-2 py-1.5 text-sm outline-none"
+                className="max-h-32 min-h-[2.25rem] flex-1 resize-none bg-transparent px-2.5 py-2 text-sm outline-none"
               />
-              <Button size="icon" onClick={() => void onSend()} disabled={busy || !input.trim()} aria-label="Enviar">
+              <Button size="icon" className="rounded-xl" onClick={() => void onSend()} disabled={busy || !input.trim()} aria-label="Enviar">
                 {busy ? <Loader2 className="animate-spin" /> : <Send />}
               </Button>
             </div>

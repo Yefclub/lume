@@ -31,6 +31,9 @@ jobs:
     needs: resolve
     strategy:
       fail-fast: false
+      # Serializa os 3 OS: evita race ao mesclar o latest.json (senão uma
+      # plataforma some do updater, quebrando o auto-update).
+      max-parallel: 1
       matrix:
         include:
           - platform: macos-latest # Apple Silicon
