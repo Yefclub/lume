@@ -84,7 +84,7 @@ pub fn list_models() -> Vec<ModelDef> {
 }
 
 pub struct AiState {
-    backend: LlamaBackend,
+    backend: Arc<LlamaBackend>,
     loaded: Mutex<Option<(String, Arc<LlamaModel>)>>,
 }
 
@@ -92,7 +92,7 @@ impl AiState {
     pub fn new() -> Result<Self, String> {
         let backend = LlamaBackend::init().map_err(|e| e.to_string())?;
         Ok(Self {
-            backend,
+            backend: Arc::new(backend),
             loaded: Mutex::new(None),
         })
     }
@@ -360,11 +360,12 @@ fn build_prompt(format: ChatFormat, system: &str, messages: &[ChatMsg], think: b
     }
 }
 
-/// Conversa com a IA local. Streama tokens via `on_token`.
+/// Conversa com a IA local. Roda a geração numa thread dedicada (spawn_blocking)
+/// para NUNCA congelar a UI; streama tokens via `on_token`.
 #[tauri::command]
-pub fn chat(
+pub async fn chat(
     app: AppHandle,
-    state: State<AiState>,
+    state: State<'_, AiState>,
     model_id: String,
     messages: Vec<ChatMsg>,
     reasoning: bool,
@@ -376,13 +377,14 @@ pub fn chat(
         return Err("o modelo ainda não foi baixado".into());
     }
 
-    // Carrega/cacheia o modelo por id.
+    let backend = state.backend.clone();
+    // Carrega/cacheia o modelo por id (lock liberado antes do await).
     let model = {
         let mut guard = state.loaded.lock().map_err(|e| e.to_string())?;
         let needs = guard.as_ref().map(|(id, _)| id != def.id).unwrap_or(true);
         if needs {
             log::info!("carregando modelo {}", def.id);
-            let m = LlamaModel::load_from_file(&state.backend, &path, &LlamaModelParams::default())
+            let m = LlamaModel::load_from_file(&backend, &path, &LlamaModelParams::default())
                 .map_err(|e| format!("falha ao carregar o modelo: {e}"))?;
             *guard = Some((def.id.to_string(), Arc::new(m)));
         }
@@ -400,13 +402,35 @@ pub fn chat(
         brain_context(&app, &last_user)
     );
     let prompt = build_prompt(def.format, &system, &messages, reasoning && def.reasoning);
+    let stop = match def.format {
+        ChatFormat::ChatML => "<|im_end|>",
+        ChatFormat::Gemma => "<end_of_turn>",
+    }
+    .to_string();
+    let def_id = def.id.to_string();
 
+    tauri::async_runtime::spawn_blocking(move || {
+        generate(&backend, &model, &prompt, &stop, &def_id, &on_token)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Loop de inferência (bloqueante) — roda fora da thread da UI.
+fn generate(
+    backend: &LlamaBackend,
+    model: &LlamaModel,
+    prompt: &str,
+    stop: &str,
+    def_id: &str,
+    on_token: &Channel<String>,
+) -> Result<(), String> {
     let threads = std::thread::available_parallelism()
         .map(|n| n.get() as i32)
         .unwrap_or(4);
     let mut ctx = model
         .new_context(
-            &state.backend,
+            backend,
             LlamaContextParams::default()
                 .with_n_ctx(NonZeroU32::new(8192))
                 .with_n_threads(threads)
@@ -415,7 +439,7 @@ pub fn chat(
         .map_err(|e| e.to_string())?;
 
     let tokens = model
-        .str_to_token(&prompt, AddBos::Always)
+        .str_to_token(prompt, AddBos::Always)
         .map_err(|e| e.to_string())?;
     let mut batch = LlamaBatch::new(8192, 1);
     let last_idx = tokens.len() as i32 - 1;
@@ -426,10 +450,6 @@ pub fn chat(
     }
     ctx.decode(&mut batch).map_err(|e| e.to_string())?;
 
-    let stop = match def.format {
-        ChatFormat::ChatML => "<|im_end|>",
-        ChatFormat::Gemma => "<end_of_turn>",
-    };
     let mut sampler = LlamaSampler::greedy();
     let base = tokens.len() as i32;
     let mut decoder = encoding_rs::UTF_8.new_decoder();
@@ -462,7 +482,7 @@ pub fn chat(
         "geração: {n_gen} tokens em {:.1}s ({:.1} tok/s) · {} · prompt {} tokens",
         secs,
         n_gen as f64 / secs,
-        def.id,
+        def_id,
         tokens.len()
     );
     Ok(())

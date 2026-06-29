@@ -6,7 +6,7 @@ import { Download, RefreshCw, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 type Phase = "idle" | "downloading" | "ready" | "installing";
-const CHECK_INTERVAL = 30 * 60 * 1000; // re-verifica a cada 30 min
+const CHECK_INTERVAL = 15 * 60 * 1000; // re-verifica a cada 15 min
 
 /**
  * Verifica updates ao abrir E periodicamente (não só no boot). Baixa em
@@ -45,9 +45,13 @@ export function UpdateBanner() {
     };
     void runCheck();
     const id = setInterval(() => void runCheck(), CHECK_INTERVAL);
+    // Também verifica quando a janela volta ao foco (responsivo).
+    const onFocus = () => void runCheck();
+    window.addEventListener("focus", onFocus);
     return () => {
       cancelled = true;
       clearInterval(id);
+      window.removeEventListener("focus", onFocus);
     };
   }, []);
 
