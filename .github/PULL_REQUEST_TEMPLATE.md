@@ -2,6 +2,15 @@
 
 <!-- Resumo curto da mudança e do porquê. -->
 
+## Nota de release (Novidades)
+
+<!--
+Escreva uma nota curta e NATURAL, em PT-BR, para o usuário final (não para devs),
+na voz de produto do Lume. Vale para PR humana ou de IA — toda PR relevante tem nota.
+Em PRs de release, isto vira `release-notes/vX.Y.Z.md` e aparece no painel "Novidades"
+do app e no corpo do Release no GitHub.
+-->
+
 ## Tipo
 
 - [ ] feat — nova funcionalidade

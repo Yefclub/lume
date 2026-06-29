@@ -1,18 +1,19 @@
-//! Parser do formato OKF (Open Knowledge Format).
+//! Formato OKF (Open Knowledge Format) + armazenamento do cérebro.
 //!
-//! Cada conceito do "cérebro" é um arquivo markdown com YAML frontmatter;
-//! o campo `type` é obrigatório (mandato OKF). Estes arquivos são a
-//! **fonte de verdade** — o índice SQLite (Fase 1) é derivado/descartável.
+//! Cada conceito é um arquivo markdown com YAML frontmatter; `type` é
+//! obrigatório (mandato OKF). O cérebro real vive em
+//! `<app_data_dir>/brain/` — fonte de verdade. Na primeira execução o
+//! diretório é semeado com exemplos.
 
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+use tauri::{AppHandle, Manager};
 
 /// Uma nota OKF: frontmatter tipado + corpo markdown.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OkfNote {
     /// Caminho relativo ao diretório do cérebro (identidade do conceito).
     pub path: String,
-    /// Campo OKF obrigatório.
     #[serde(rename = "type")]
     pub note_type: String,
     #[serde(default)]
@@ -23,12 +24,9 @@ pub struct OkfNote {
     pub tags: Vec<String>,
     #[serde(default)]
     pub timestamp: Option<String>,
-    /// Corpo markdown abaixo do frontmatter.
     pub body: String,
 }
 
-/// Subconjunto tipado do frontmatter que o Lume entende hoje.
-/// Campos extras no YAML são ignorados (continuam editáveis no arquivo).
 #[derive(Debug, Default, Deserialize)]
 struct Frontmatter {
     #[serde(rename = "type")]
@@ -40,9 +38,10 @@ struct Frontmatter {
     timestamp: Option<String>,
 }
 
-/// Separa o bloco de frontmatter YAML do corpo markdown.
+// ----- Parsing -----------------------------------------------------------
+
 fn split_frontmatter(raw: &str) -> Result<(&str, &str), String> {
-    let raw = raw.strip_prefix('\u{feff}').unwrap_or(raw); // remove BOM se houver
+    let raw = raw.strip_prefix('\u{feff}').unwrap_or(raw);
     let after = raw
         .strip_prefix("---")
         .ok_or("arquivo OKF deve começar com frontmatter delimitado por '---'")?;
@@ -50,9 +49,7 @@ fn split_frontmatter(raw: &str) -> Result<(&str, &str), String> {
     let close = after
         .find("\n---")
         .ok_or("frontmatter YAML não foi fechado com '---'")?;
-    let fm = &after[..close];
-    let body = after[close + 4..].trim_start_matches(['\r', '\n']);
-    Ok((fm, body))
+    Ok((&after[..close], after[close + 4..].trim_start_matches(['\r', '\n'])))
 }
 
 /// Parseia o conteúdo bruto de um arquivo OKF.
@@ -75,37 +72,92 @@ pub fn parse_okf(raw: &str, path: &str) -> Result<OkfNote, String> {
     })
 }
 
-/// Resolve o diretório do cérebro. Em `tauri dev` o cwd é `src-tauri/`,
-/// então `../brain.example` aponta para a raiz do repo.
-fn resolve_brain_dir(dir: Option<String>) -> Result<PathBuf, String> {
-    if let Some(d) = dir {
-        let p = PathBuf::from(d);
-        return if p.is_dir() {
-            Ok(p)
-        } else {
-            Err(format!("diretório não encontrado: {}", p.display()))
-        };
-    }
-    let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
-    for cand in ["../brain.example", "brain.example"] {
-        let p = cwd.join(cand);
-        if p.is_dir() {
-            return Ok(p);
+// ----- Armazenamento (app data dir + seed) -------------------------------
+
+/// Notas-semente embutidas no binário (copiadas de `brain.example/`).
+const SEEDS: &[(&str, &str)] = &[
+    ("goals/aprender-rust.md", include_str!("../../brain.example/goals/aprender-rust.md")),
+    ("notes/ownership.md", include_str!("../../brain.example/notes/ownership.md")),
+    ("daily/2026-06-28.md", include_str!("../../brain.example/daily/2026-06-28.md")),
+    ("people/ana.md", include_str!("../../brain.example/people/ana.md")),
+    ("preferences/cafe.md", include_str!("../../brain.example/preferences/cafe.md")),
+    ("facts/fuso.md", include_str!("../../brain.example/facts/fuso.md")),
+    ("projects/lume.md", include_str!("../../brain.example/projects/lume.md")),
+];
+
+/// Diretório do cérebro (`<app_data_dir>/brain`). Cria e semeia se for novo.
+fn brain_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let base = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("não foi possível resolver o diretório de dados: {e}"))?
+        .join("brain");
+    if !base.exists() {
+        std::fs::create_dir_all(&base).map_err(|e| e.to_string())?;
+        for (rel, content) in SEEDS {
+            let p = base.join(rel);
+            if let Some(parent) = p.parent() {
+                std::fs::create_dir_all(parent).ok();
+            }
+            std::fs::write(&p, content).map_err(|e| e.to_string())?;
         }
     }
-    Err("diretório do cérebro não encontrado (passe `dir` ou crie `brain.example/`)".to_string())
+    Ok(base)
 }
 
-/// Lê recursivamente todos os `.md` válidos do diretório do cérebro.
+/// Garante que `rel` é um caminho relativo seguro (sem `..`, sem raiz).
+fn safe_rel(rel: &str) -> Result<PathBuf, String> {
+    let p = Path::new(rel);
+    if rel.is_empty() || !p.components().all(|c| matches!(c, Component::Normal(_))) {
+        return Err(format!("caminho inválido: {rel}"));
+    }
+    if p.extension().and_then(|s| s.to_str()) != Some("md") {
+        return Err("o caminho deve terminar em .md".to_string());
+    }
+    Ok(p.to_path_buf())
+}
+
+fn type_folder(t: &str) -> &'static str {
+    match t {
+        "person" => "people",
+        "preference" => "preferences",
+        "goal" => "goals",
+        "fact" => "facts",
+        "project" => "projects",
+        "daily" => "daily",
+        _ => "notes",
+    }
+}
+
+fn slugify(s: &str) -> String {
+    let mut out = String::new();
+    let mut prev_dash = false;
+    for ch in s.chars() {
+        if ch.is_alphanumeric() {
+            out.extend(ch.to_lowercase());
+            prev_dash = false;
+        } else if !prev_dash {
+            out.push('-');
+            prev_dash = true;
+        }
+    }
+    let trimmed = out.trim_matches('-').to_string();
+    if trimmed.is_empty() {
+        "nota".to_string()
+    } else {
+        trimmed
+    }
+}
+
+// ----- Comandos ----------------------------------------------------------
+
+/// Lê recursivamente todas as notas OKF válidas do cérebro.
 #[tauri::command]
-pub fn list_brain_notes(dir: Option<String>) -> Result<Vec<OkfNote>, String> {
-    let base = resolve_brain_dir(dir)?;
+pub fn list_brain_notes(app: AppHandle) -> Result<Vec<OkfNote>, String> {
+    let base = brain_dir(&app)?;
     let mut notes = Vec::new();
-    for entry in walkdir::WalkDir::new(&base)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        let p: &Path = entry.path();
+    for entry in walkdir::WalkDir::new(&base).into_iter().filter_map(|e| e.ok()) {
+        let p = entry.path();
         if p.extension().and_then(|s| s.to_str()) == Some("md") {
             let raw = std::fs::read_to_string(p).map_err(|e| e.to_string())?;
             let rel = p
@@ -113,17 +165,83 @@ pub fn list_brain_notes(dir: Option<String>) -> Result<Vec<OkfNote>, String> {
                 .unwrap_or(p)
                 .to_string_lossy()
                 .replace('\\', "/");
-            // Notas inválidas são puladas no MVP; Fase 1 reporta erros na UI.
             if let Ok(note) = parse_okf(&raw, &rel) {
                 notes.push(note);
             }
         }
     }
-    notes.sort_by(|a, b| a.path.cmp(&b.path));
+    notes.sort_by(|a, b| b.timestamp.cmp(&a.timestamp).then(a.path.cmp(&b.path)));
     Ok(notes)
 }
 
-/// Parseia uma string OKF avulsa (útil p/ a IA validar antes de gravar).
+/// Conteúdo bruto (markdown completo) de uma nota.
+#[tauri::command]
+pub fn read_note(app: AppHandle, path: String) -> Result<String, String> {
+    let rel = safe_rel(&path)?;
+    let full = brain_dir(&app)?.join(rel);
+    std::fs::read_to_string(full).map_err(|e| e.to_string())
+}
+
+/// Salva (sobrescreve) uma nota; valida que continua sendo OKF válido.
+#[tauri::command]
+pub fn save_note(app: AppHandle, path: String, content: String) -> Result<OkfNote, String> {
+    let note = parse_okf(&content, &path)?; // valida antes de gravar
+    let rel = safe_rel(&path)?;
+    let full = brain_dir(&app)?.join(rel);
+    if let Some(parent) = full.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&full, content).map_err(|e| e.to_string())?;
+    Ok(note)
+}
+
+/// Cria uma nota nova (esqueleto) e retorna ela. `timestamp` ISO vem do front.
+#[tauri::command]
+pub fn create_note(
+    app: AppHandle,
+    note_type: String,
+    title: String,
+    timestamp: String,
+) -> Result<OkfNote, String> {
+    if note_type.trim().is_empty() {
+        return Err("type é obrigatório".to_string());
+    }
+    let base = brain_dir(&app)?;
+    let folder = type_folder(&note_type);
+    let slug = slugify(&title);
+    let mut rel = format!("{folder}/{slug}.md");
+    let mut n = 2;
+    while base.join(&rel).exists() {
+        rel = format!("{folder}/{slug}-{n}.md");
+        n += 1;
+    }
+    let safe_title = title.replace(['\n', '\r'], " ");
+    let content = format!(
+        "---\ntype: {note_type}\ntitle: {safe_title}\ntags: []\ntimestamp: {timestamp}\n---\n\n# {safe_title}\n\n"
+    );
+    let full = base.join(&rel);
+    if let Some(parent) = full.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&full, &content).map_err(|e| e.to_string())?;
+    parse_okf(&content, &rel)
+}
+
+/// Apaga uma nota.
+#[tauri::command]
+pub fn delete_note(app: AppHandle, path: String) -> Result<(), String> {
+    let rel = safe_rel(&path)?;
+    let full = brain_dir(&app)?.join(rel);
+    std::fs::remove_file(full).map_err(|e| e.to_string())
+}
+
+/// Caminho absoluto do diretório do cérebro (para exibir na UI).
+#[tauri::command]
+pub fn brain_path(app: AppHandle) -> Result<String, String> {
+    Ok(brain_dir(&app)?.to_string_lossy().to_string())
+}
+
+/// Parseia uma string OKF avulsa (útil p/ validar antes de gravar).
 #[tauri::command]
 pub fn parse_okf_str(content: String) -> Result<OkfNote, String> {
     parse_okf(&content, "<inline>")
@@ -145,12 +263,25 @@ mod tests {
 
     #[test]
     fn rejeita_sem_type() {
-        let raw = "---\ntitle: Sem tipo\n---\nx";
-        assert!(parse_okf(raw, "x.md").is_err());
+        assert!(parse_okf("---\ntitle: x\n---\ny", "x.md").is_err());
     }
 
     #[test]
     fn rejeita_sem_frontmatter() {
         assert!(parse_okf("só corpo", "x.md").is_err());
+    }
+
+    #[test]
+    fn safe_rel_bloqueia_traversal() {
+        assert!(safe_rel("../escapa.md").is_err());
+        assert!(safe_rel("/abs.md").is_err());
+        assert!(safe_rel("ok/nota.md").is_ok());
+        assert!(safe_rel("sem-extensao").is_err());
+    }
+
+    #[test]
+    fn slug_normaliza() {
+        assert_eq!(slugify("Minha Nota Nova!"), "minha-nota-nova");
+        assert_eq!(slugify("  "), "nota");
     }
 }

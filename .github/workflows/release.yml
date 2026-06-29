@@ -70,22 +70,37 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Build + publicar instaladores
+      - name: Nota de release (Novidades)
+        id: notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.resolve.outputs.tag }}"
+          FILE="release-notes/${TAG}.md"
+          if [ -f "$FILE" ]; then
+            BODY=$(node -e "let s=require('fs').readFileSync(process.argv[1],'utf8').replace(/^﻿/,'');s=s.replace(/^---[\s\S]*?\n---\s*/,'');process.stdout.write(s.trim())" "$FILE")
+          else
+            BODY="Instaladores gerados automaticamente pelo CI."
+          fi
+          {
+            echo "body<<__LUME_EOF__"
+            echo "$BODY"
+            echo ""
+            echo "---"
+            echo "⚠️ Binários sem code signing do SO (fase inicial): o SmartScreen (Windows) ou o Gatekeeper (macOS) pode avisar na primeira execução. As atualizações automáticas são assinadas (updater)."
+            echo "__LUME_EOF__"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build + publicar instaladores (assinados p/ updater)
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ needs.resolve.outputs.tag }}
           releaseName: "Lume ${{ needs.resolve.outputs.tag }}"
-          releaseBody: |
-            Instaladores gerados automaticamente pelo CI.
-
-            - **Windows:** `.exe` (instalador NSIS) ou `.msi`
-            - **macOS (Apple Silicon):** `.dmg`
-            - **Linux:** `.AppImage` ou `.deb`
-
-            ⚠️ Binários **não assinados** (Fase 0) — o SmartScreen (Windows) ou o
-            Gatekeeper (macOS) pode avisar na primeira execução. Code signing virá depois.
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: false
-          prerelease: true
+          prerelease: false
           args: ${{ matrix.args }}
