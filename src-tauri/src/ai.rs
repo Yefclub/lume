@@ -83,12 +83,12 @@ pub enum DlEvent {
     Error { message: String },
 }
 
-const MAX_RETRIES: u32 = 6;
+const MAX_RETRIES: u32 = 20;
 
 /// Baixa o modelo GGUF com progresso, **resumível** (HTTP Range) e com retry.
 /// Em falha de rede mantém o `.part` para retomar de onde parou.
 #[tauri::command]
-pub fn download_model(app: AppHandle, on_event: Channel<DlEvent>) -> Result<(), String> {
+pub async fn download_model(app: AppHandle, on_event: Channel<DlEvent>) -> Result<(), String> {
     let path = model_path(&app)?;
     if path.exists() {
         let _ = on_event.send(DlEvent::Done);
@@ -97,9 +97,11 @@ pub fn download_model(app: AppHandle, on_event: Channel<DlEvent>) -> Result<(), 
     let tmp = path.with_extension("part");
     log::info!("iniciando download do modelo: {MODEL_URL}");
 
-    match download_with_resume(&tmp, &on_event) {
+    match download_with_resume(&tmp, &on_event).await {
         Ok(()) => {
-            std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+            tokio::fs::rename(&tmp, &path)
+                .await
+                .map_err(|e| e.to_string())?;
             log::info!("modelo baixado com sucesso: {}", path.display());
             let _ = on_event.send(DlEvent::Done);
             Ok(())
@@ -112,28 +114,35 @@ pub fn download_model(app: AppHandle, on_event: Channel<DlEvent>) -> Result<(), 
     }
 }
 
-fn download_with_resume(tmp: &std::path::Path, on_event: &Channel<DlEvent>) -> Result<(), String> {
-    use std::io::{Read, Write};
-    let client = reqwest::blocking::Client::builder()
+/// Download assíncrono, resumível (HTTP Range), com `read_timeout` que detecta
+/// estol de conexão (não trava para sempre) — retoma do `.part`.
+async fn download_with_resume(
+    tmp: &std::path::Path,
+    on_event: &Channel<DlEvent>,
+) -> Result<(), String> {
+    use futures_util::StreamExt;
+    use tokio::io::AsyncWriteExt;
+
+    let client = reqwest::Client::builder()
         .user_agent("Lume/1.0 (+https://github.com/Yefclub/lume)")
-        .timeout(None)
         .connect_timeout(std::time::Duration::from_secs(30))
+        .read_timeout(std::time::Duration::from_secs(60))
         .build()
         .map_err(|e| e.to_string())?;
 
     let mut last_err = String::new();
     for attempt in 1..=MAX_RETRIES {
-        let mut existing = tmp.metadata().map(|m| m.len()).unwrap_or(0);
+        let mut existing = tokio::fs::metadata(tmp).await.map(|m| m.len()).unwrap_or(0);
         let mut req = client.get(MODEL_URL);
         if existing > 0 {
             req = req.header(reqwest::header::RANGE, format!("bytes={existing}-"));
         }
-        let mut resp = match req.send() {
+        let resp = match req.send().await {
             Ok(r) => r,
             Err(e) => {
                 last_err = e.to_string();
                 log::warn!("tentativa {attempt}/{MAX_RETRIES} sem conectar: {last_err}");
-                std::thread::sleep(std::time::Duration::from_secs(3));
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
                 continue;
             }
         };
@@ -147,39 +156,44 @@ fn download_with_resume(tmp: &std::path::Path, on_event: &Channel<DlEvent>) -> R
         }
 
         let total = existing + resp.content_length().unwrap_or(0);
-        let mut oo = std::fs::OpenOptions::new();
+        let mut oo = tokio::fs::OpenOptions::new();
         oo.create(true).write(true);
         if append {
             oo.append(true);
         } else {
             oo.truncate(true);
         }
-        let mut file = oo.open(tmp).map_err(|e| e.to_string())?;
+        let mut file = oo.open(tmp).await.map_err(|e| e.to_string())?;
 
         let mut downloaded = existing;
-        let mut buf = vec![0u8; 1 << 20];
-        let stream = (|| -> Result<(), String> {
-            loop {
-                let n = resp.read(&mut buf).map_err(|e| e.to_string())?;
-                if n == 0 {
+        let mut stream = resp.bytes_stream();
+        let mut stream_err: Option<String> = None;
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(chunk) => {
+                    if let Err(e) = file.write_all(&chunk).await {
+                        stream_err = Some(e.to_string());
+                        break;
+                    }
+                    downloaded += chunk.len() as u64;
+                    let _ = on_event.send(DlEvent::Progress { downloaded, total });
+                }
+                Err(e) => {
+                    stream_err = Some(e.to_string());
                     break;
                 }
-                file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
-                downloaded += n as u64;
-                let _ = on_event.send(DlEvent::Progress { downloaded, total });
             }
-            Ok(())
-        })();
-        file.flush().ok();
+        }
+        let _ = file.flush().await;
 
-        match stream {
-            Ok(()) => return Ok(()),
-            Err(e) => {
+        match stream_err {
+            None => return Ok(()),
+            Some(e) => {
                 last_err = e;
                 log::warn!(
                     "tentativa {attempt}/{MAX_RETRIES} caiu em {downloaded}/{total}: {last_err}"
                 );
-                std::thread::sleep(std::time::Duration::from_secs(3));
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
             }
         }
     }
