@@ -15,7 +15,7 @@ jobs:
     name: Frontend (typecheck + build)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4
         with:
           version: 10
@@ -32,7 +32,7 @@ jobs:
     name: Core Rust (fmt + clippy + test)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Dependências de sistema do Tauri
         run: |
           sudo apt-get update
