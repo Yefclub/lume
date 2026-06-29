@@ -1,0 +1,74 @@
+name: PR release labels
+
+# PRs para main são PRs de release: exigem exatamente uma label release:* e que
+# os 3 arquivos de versão já estejam bumpados para a próxima versão esperada.
+# Assim main pode ser protegida sem nenhum workflow commitando direto nela.
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, edited, labeled, unlabeled, synchronize]
+
+permissions:
+  pull-requests: read
+  contents: read
+
+jobs:
+  check-label:
+    name: Release label gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Validar label de release + bump nos 3 arquivos
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          set -euo pipefail
+
+          count=0
+          bump=""
+          for candidate in patch minor major; do
+            if echo ",$LABELS," | grep -q ",release:${candidate},"; then
+              count=$((count + 1))
+              bump="$candidate"
+            fi
+          done
+          if [ "$count" -eq 0 ]; then
+            echo "PR sem label de release — tratado como PR normal (sem gate de versão). OK."
+            exit 0
+          fi
+          if [ "$count" -gt 1 ]; then
+            echo "Use apenas UMA label de release: release:patch, release:minor ou release:major."
+            exit 1
+          fi
+
+          last_stable=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | grep -Em1 '^v[0-9]+\.[0-9]+\.[0-9]+$' || true)
+          if [ -n "$last_stable" ]; then
+            base_version="${last_stable#v}"
+          else
+            base_version="$(node -p "require('./package.json').version.split('-')[0]")"
+          fi
+
+          expected="$(BASE_VER="$base_version" BUMP="$bump" node -e '
+            const [a, b, c] = process.env.BASE_VER.split(".").map(Number);
+            const k = process.env.BUMP;
+            console.log(k === "major" ? `${a + 1}.0.0` : k === "minor" ? `${a}.${b + 1}.0` : `${a}.${b}.${c + 1}`);
+          ')"
+
+          pkg=$(node -p "require('./package.json').version")
+          conf=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          cargo=$(grep -m1 '^version = ' src-tauri/Cargo.toml | sed -E 's/version = "(.*)"/\1/')
+
+          if [ "$pkg" != "$expected" ] || [ "$conf" != "$expected" ] || [ "$cargo" != "$expected" ]; then
+            echo "Esperado $expected (bump $bump sobre $base_version) nos 3 arquivos."
+            echo "Atual: package.json=$pkg tauri.conf=$conf Cargo=$cargo"
+            echo "Rode: pnpm release:prepare $bump"
+            exit 1
+          fi
+          echo "OK: release $expected ($bump)."

@@ -2,29 +2,49 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
-  release:
-    name: Build & publicar (${{ matrix.platform }})
-    permissions:
-      contents: write
+  resolve:
+    name: Resolver tag/versão
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.v.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          set -euo pipefail
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            V=$(node -p "require('./package.json').version")
+            echo "tag=v$V" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: Build (${{ matrix.platform }})
+    needs: resolve
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: macos-latest # Apple Silicon
             args: "--target aarch64-apple-darwin"
-          - platform: ubuntu-latest
+          - platform: ubuntu-22.04 # AppImage com glibc mais compatível
             args: ""
-          - platform: windows-latest
+          - platform: windows-latest # .exe (NSIS) + .msi
             args: ""
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Dependências de sistema do Tauri (Linux)
-        if: matrix.platform == 'ubuntu-latest'
+      - name: Dependências de sistema (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -42,22 +62,30 @@ jobs:
           node-version: 24
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || '' }}
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: "src-tauri -> target"
 
       - run: pnpm install --frozen-lockfile
 
-      - uses: tauri-apps/tauri-action@v0
+      - name: Build + publicar instaladores
+        uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Assinatura do updater — gerar com `pnpm tauri signer generate`
-          # e guardar a chave PRIVADA apenas nos secrets do repositório.
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Lume ${{ github.ref_name }}"
-          releaseDraft: true
-          prerelease: false
+          tagName: ${{ needs.resolve.outputs.tag }}
+          releaseName: "Lume ${{ needs.resolve.outputs.tag }}"
+          releaseBody: |
+            Instaladores gerados automaticamente pelo CI.
+
+            - **Windows:** `.exe` (instalador NSIS) ou `.msi`
+            - **macOS (Apple Silicon):** `.dmg`
+            - **Linux:** `.AppImage` ou `.deb`
+
+            ⚠️ Binários **não assinados** (Fase 0) — o SmartScreen (Windows) ou o
+            Gatekeeper (macOS) pode avisar na primeira execução. Code signing virá depois.
+          releaseDraft: false
+          prerelease: true
           args: ${{ matrix.args }}

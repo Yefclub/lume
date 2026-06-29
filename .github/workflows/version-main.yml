@@ -1,0 +1,71 @@
+name: Publish stable release
+
+# Quando main contém uma versão estável nova (X.Y.Z) ainda sem tag, cria a tag
+# vX.Y.Z e dispara o release.yml. NÃO commita em main (branch-protection friendly).
+# A tag é criada com GITHUB_TOKEN (que não dispara outros workflows), por isso o
+# release é acionado explicitamente via `gh workflow run` — evita build duplicado.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: version-main-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  version-main:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Ler e validar versão (3 arquivos em sincronia)
+        id: version
+        run: |
+          set -euo pipefail
+          PKG=$(node -p "require('./package.json').version")
+          CONF=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          CARGO=$(grep -m1 '^version = ' src-tauri/Cargo.toml | sed -E 's/version = "(.*)"/\1/')
+          if ! echo "$PKG" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "package.json não está em SemVer estável X.Y.Z: $PKG"; exit 1
+          fi
+          if [ "$PKG" != "$CONF" ] || [ "$PKG" != "$CARGO" ]; then
+            echo "Versões divergentes: package.json=$PKG tauri.conf=$CONF Cargo=$CARGO"; exit 1
+          fi
+          echo "version=$PKG" >> "$GITHUB_OUTPUT"
+          echo "tag=v$PKG" >> "$GITHUB_OUTPUT"
+
+      - name: Criar tag e disparar release
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          existing=$(git ls-remote origin "refs/tags/$TAG^{}" | cut -f1 || true)
+          if [ -n "$existing" ]; then
+            echo "Tag $TAG já existe. Nada a publicar."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+          gh workflow run release.yml --ref "$TAG"
+          {
+            echo "## Release disparada"
+            echo "- Tag: \`$TAG\`"
+            echo "- Build dos instaladores em andamento (Windows/macOS/Linux)."
+          } >> "$GITHUB_STEP_SUMMARY"

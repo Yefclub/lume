@@ -13,6 +13,8 @@ Fluxos reutilizáveis para tarefas recorrentes no LUME (Rust + Tauri 2 + React/s
 | `research` | Pesquisa estruturada com trade-offs (WebSearch/WebFetch); validar libs/modelos antes de afirmar. | "compara as opções", "essa lib existe?", "qual a melhor abordagem", "tem modelo novo pra isso?" |
 | `ship` | Branch → PR → CI → review → merge via gh CLI, Conventional Commits. | "abre um PR", "sobe isso", "manda pra review", "faz o merge" |
 | `review-pr` | Revisão técnica de PR (correção, segurança, simplicidade) para Rust/Tauri/React. | "revisa esse PR", "dá uma olhada nesse diff", "isso está bom pra mergear?" |
+| `release` | Cortar uma release: bump de versão (3 arquivos), tag e build dos instaladores. | "corta uma release", "publica nova versão", "gera o .exe", "bump de versão" |
+| `changelog` | Resumir a atividade p/ notas de release ou status. | "o que mudou", "monta o changelog", "resumo da semana" |
 
 > **Skills são vivos.** Depois de executar uma skill, peça feedback ao usuário e **edite o `SKILL.md`** para incorporar o que funcionou melhor. Eles devem evoluir com o projeto, não enrijecer.
 
