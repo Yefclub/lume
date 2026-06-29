@@ -49,7 +49,10 @@ fn split_frontmatter(raw: &str) -> Result<(&str, &str), String> {
     let close = after
         .find("\n---")
         .ok_or("frontmatter YAML não foi fechado com '---'")?;
-    Ok((&after[..close], after[close + 4..].trim_start_matches(['\r', '\n'])))
+    Ok((
+        &after[..close],
+        after[close + 4..].trim_start_matches(['\r', '\n']),
+    ))
 }
 
 /// Parseia o conteúdo bruto de um arquivo OKF.
@@ -76,13 +79,34 @@ pub fn parse_okf(raw: &str, path: &str) -> Result<OkfNote, String> {
 
 /// Notas-semente embutidas no binário (copiadas de `brain.example/`).
 const SEEDS: &[(&str, &str)] = &[
-    ("goals/aprender-rust.md", include_str!("../../brain.example/goals/aprender-rust.md")),
-    ("notes/ownership.md", include_str!("../../brain.example/notes/ownership.md")),
-    ("daily/2026-06-28.md", include_str!("../../brain.example/daily/2026-06-28.md")),
-    ("people/ana.md", include_str!("../../brain.example/people/ana.md")),
-    ("preferences/cafe.md", include_str!("../../brain.example/preferences/cafe.md")),
-    ("facts/fuso.md", include_str!("../../brain.example/facts/fuso.md")),
-    ("projects/lume.md", include_str!("../../brain.example/projects/lume.md")),
+    (
+        "goals/aprender-rust.md",
+        include_str!("../../brain.example/goals/aprender-rust.md"),
+    ),
+    (
+        "notes/ownership.md",
+        include_str!("../../brain.example/notes/ownership.md"),
+    ),
+    (
+        "daily/2026-06-28.md",
+        include_str!("../../brain.example/daily/2026-06-28.md"),
+    ),
+    (
+        "people/ana.md",
+        include_str!("../../brain.example/people/ana.md"),
+    ),
+    (
+        "preferences/cafe.md",
+        include_str!("../../brain.example/preferences/cafe.md"),
+    ),
+    (
+        "facts/fuso.md",
+        include_str!("../../brain.example/facts/fuso.md"),
+    ),
+    (
+        "projects/lume.md",
+        include_str!("../../brain.example/projects/lume.md"),
+    ),
 ];
 
 /// Diretório do cérebro (`<app_data_dir>/brain`). Cria e semeia se for novo.
@@ -156,7 +180,10 @@ fn slugify(s: &str) -> String {
 pub fn list_brain_notes(app: AppHandle) -> Result<Vec<OkfNote>, String> {
     let base = brain_dir(&app)?;
     let mut notes = Vec::new();
-    for entry in walkdir::WalkDir::new(&base).into_iter().filter_map(|e| e.ok()) {
+    for entry in walkdir::WalkDir::new(&base)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         let p = entry.path();
         if p.extension().and_then(|s| s.to_str()) == Some("md") {
             let raw = std::fs::read_to_string(p).map_err(|e| e.to_string())?;

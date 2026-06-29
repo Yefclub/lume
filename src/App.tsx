@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  Bot,
   BrainCircuit,
   FileText,
   Plus,
@@ -14,6 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { Novidades } from "@/components/Novidades";
+import { Chat } from "@/components/Chat";
 import { createNote, deleteNote, listNotes, readNote, saveNote } from "@/lib/api";
 import { type OkfNote, TYPE_LABEL, TYPES } from "@/lib/types";
 
@@ -29,6 +31,7 @@ function App() {
   const [saving, setSaving] = useState(false);
   const [editorError, setEditorError] = useState<string | null>(null);
   const [showNovidades, setShowNovidades] = useState(false);
+  const [showChat, setShowChat] = useState(false);
   const [newType, setNewType] = useState<string>("note");
   const [newTitle, setNewTitle] = useState("");
 
@@ -136,6 +139,9 @@ function App() {
               className="h-9 w-full rounded-md border border-input bg-background pl-8 pr-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>
+          <Button variant="ghost" size="sm" onClick={() => setShowChat(true)}>
+            <Bot /> IA
+          </Button>
           <Button variant="ghost" size="sm" onClick={() => setShowNovidades(true)}>
             <Sparkles /> Novidades
           </Button>
@@ -276,6 +282,7 @@ function App() {
         </section>
       </main>
 
+      {showChat && <Chat onClose={() => setShowChat(false)} />}
       {showNovidades && <Novidades onClose={() => setShowNovidades(false)} />}
     </div>
   );

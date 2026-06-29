@@ -14,6 +14,9 @@ dist-ssr/
 src-tauri/target/
 src-tauri/gen/
 
+# Config local do cargo (paths de cmake/libclang específicos desta máquina)
+.cargo/config.toml
+
 # ---------------------------------------------------------------------------
 # Variáveis de ambiente e segredos
 # ---------------------------------------------------------------------------

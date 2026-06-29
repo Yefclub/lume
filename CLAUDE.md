@@ -59,6 +59,7 @@ cargo fmt    --manifest-path src-tauri/Cargo.toml
 8. **Nunca commitar** o cérebro real (`brain/`), o cofre (`vault/`), `.env` ou segredos. Apenas `brain.example/`.
 9. **Identidade de commits = GitHub noreply** (`200813733+Yefclub@users.noreply.github.com`). Sem vínculo a contas/emails corporativos.
 10. Rodar `cargo clippy`/`cargo test` e `pnpm build` antes de abrir PR.
+11. **IA embarcada (llama.cpp):** o build do `llama-cpp-2` exige **cmake + LLVM/libclang**. Local: `.cargo/config.toml` (gitignored) aponta `CMAKE` e `LIBCLANG_PATH`. CI: instalados nos workflows. O modelo GGUF é baixado em runtime para `app_data_dir/models` (nunca commitado/empacotado).
 
 ## Skills & Docs
 
